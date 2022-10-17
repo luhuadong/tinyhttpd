@@ -1,4 +1,6 @@
 .vscode/
+httpd
+client
 
 # Prerequisites
 *.d
