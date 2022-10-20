@@ -26,6 +26,8 @@
 #include <sys/wait.h>
 #include <stdlib.h>
 
+#define USING_THREAD    1
+
 #define ISspace(x) isspace((int)(x))
 
 #define SERVER_STRING "Server: tinyhttpd/0.1.0\r\n"
@@ -41,7 +43,7 @@ int get_line(int, char *, int);
 void headers(int, const char *);
 void not_found(int);
 void serve_file(int, const char *);
-int startup(u_short *);
+int startup(uint16_t *);
 void unimplemented(int);
 
 /**********************************************************************/
@@ -58,8 +60,10 @@ void accept_request(int client)
     char path[512];
     size_t i, j;
     struct stat st;
-    int cgi = 0; /* becomes true if server decides this is a CGI
-                  * program */
+
+    /* becomes true if server decides this is a CGI program */
+    int cgi = 0;
+    
     char *query_string = NULL;
 
     numchars = get_line(client, buf, sizeof(buf));
@@ -80,11 +84,16 @@ void accept_request(int client)
     }
 
     if (strcasecmp(method, "POST") == 0)
+    {
         cgi = 1;
+    }
 
     i = 0;
     while (ISspace(buf[j]) && (j < sizeof(buf)))
+    {
         j++;
+    }
+
     while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < sizeof(buf)))
     {
         url[i] = buf[j];
@@ -96,8 +105,12 @@ void accept_request(int client)
     if (strcasecmp(method, "GET") == 0)
     {
         query_string = url;
+
         while ((*query_string != '?') && (*query_string != '\0'))
+        {
             query_string++;
+        }
+
         if (*query_string == '?')
         {
             cgi = 1;
@@ -107,26 +120,41 @@ void accept_request(int client)
     }
 
     sprintf(path, "htdocs%s", url);
+
     if (path[strlen(path) - 1] == '/')
+    {
         strcat(path, "index.html");
+    }
+
     if (stat(path, &st) == -1)
     {
-        while ((numchars > 0) && strcmp("\n", buf)) /* read & discard headers */
+        /* read & discard headers */
+        while ((numchars > 0) && strcmp("\n", buf))
+        {
             numchars = get_line(client, buf, sizeof(buf));
+        }
         not_found(client);
     }
     else
     {
         if ((st.st_mode & S_IFMT) == S_IFDIR)
+        {
             strcat(path, "/index.html");
-        if ((st.st_mode & S_IXUSR) ||
-            (st.st_mode & S_IXGRP) ||
-            (st.st_mode & S_IXOTH))
+        }
+
+        if ((st.st_mode & S_IXUSR) || (st.st_mode & S_IXGRP) || (st.st_mode & S_IXOTH))
+        {
             cgi = 1;
+        }
+
         if (!cgi)
+        {
             serve_file(client, path);
+        }
         else
+        {
             execute_cgi(client, path, method, query_string);
+        }
     }
 
     close(client);
@@ -222,8 +250,13 @@ void execute_cgi(int client, const char *path,
     buf[0] = 'A';
     buf[1] = '\0';
     if (strcasecmp(method, "GET") == 0)
-        while ((numchars > 0) && strcmp("\n", buf)) /* read & discard headers */
+    {
+        /* read & discard headers */
+        while ((numchars > 0) && strcmp("\n", buf))
+        {
             numchars = get_line(client, buf, sizeof(buf));
+        }
+    }
     else /* POST */
     {
         numchars = get_line(client, buf, sizeof(buf));
@@ -231,7 +264,9 @@ void execute_cgi(int client, const char *path,
         {
             buf[15] = '\0';
             if (strcasecmp(buf, "Content-Length:") == 0)
+            {
                 content_length = atoi(&(buf[16]));
+            }
             numchars = get_line(client, buf, sizeof(buf));
         }
         if (content_length == -1)
@@ -278,7 +313,7 @@ void execute_cgi(int client, const char *path,
             putenv(query_env);
         }
         else
-        { /* POST */
+        {   /* POST */
             sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
             putenv(length_env);
         }
@@ -286,17 +321,22 @@ void execute_cgi(int client, const char *path,
         exit(0);
     }
     else
-    { /* parent */
+    {   /* parent */
         close(cgi_output[1]);
         close(cgi_input[0]);
         if (strcasecmp(method, "POST") == 0)
+        {
             for (i = 0; i < content_length; i++)
             {
                 recv(client, &c, 1, 0);
                 write(cgi_input[1], &c, 1);
             }
+        }
+
         while (read(cgi_output[0], &c, 1) > 0)
+        {
             send(client, &c, 1, 0);
+        }
 
         close(cgi_output[0]);
         close(cgi_input[1]);
@@ -334,9 +374,13 @@ int get_line(int sock, char *buf, int size)
                 n = recv(sock, &c, 1, MSG_PEEK);
                 /* DEBUG printf("%02X\n", c); */
                 if ((n > 0) && (c == '\n'))
+                {
                     recv(sock, &c, 1, 0);
+                }
                 else
+                {
                     c = '\n';
+                }
             }
             buf[i] = c;
             i++;
@@ -411,12 +455,18 @@ void serve_file(int client, const char *filename)
 
     buf[0] = 'A';
     buf[1] = '\0';
-    while ((numchars > 0) && strcmp("\n", buf)) /* read & discard headers */
+
+    /* read & discard headers */
+    while ((numchars > 0) && strcmp("\n", buf))
+    {
         numchars = get_line(client, buf, sizeof(buf));
+    }
 
     resource = fopen(filename, "r");
     if (resource == NULL)
+    {
         not_found(client);
+    }
     else
     {
         headers(client, filename);
@@ -433,25 +483,40 @@ void serve_file(int client, const char *filename)
  * Parameters: pointer to variable containing the port to connect on
  * Returns: the socket */
 /**********************************************************************/
-int startup(u_short *port)
+int startup(uint16_t *port)
 {
     int httpd = 0;
     struct sockaddr_in name;
 
     httpd = socket(PF_INET, SOCK_STREAM, 0);
     if (httpd == -1)
+    {
         error_die("socket");
+    }
+
     memset(&name, 0, sizeof(name));
     name.sin_family = AF_INET;
     name.sin_port = htons(*port);
     name.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    int on = 1;
+    if (setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0)
+    {
+        error_die("setsockopt");
+    }
+
     if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
+    {
         error_die("bind");
+    }
+
     if (*port == 0) /* if dynamically allocating a port */
     {
-        int namelen = sizeof(name);
+        socklen_t namelen = sizeof(name);
         if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)
+        {
             error_die("getsockname");
+        }
         *port = ntohs(name.sin_port);
     }
     if (listen(httpd, 5) < 0)
@@ -491,30 +556,31 @@ void unimplemented(int client)
 int main(void)
 {
     int server_sock = -1;
-    u_short port = SERVER_PORT;
+    uint16_t port = SERVER_PORT;
     int client_sock = -1;
     struct sockaddr_in client_name;
-    int client_name_len = sizeof(client_name);
+    socklen_t client_name_len = sizeof(client_name);
+
+#if USING_THREAD
     pthread_t newthread;
+#endif
 
     server_sock = startup(&port);
     printf("httpd running on port %d\n", port);
 
     while (1)
     {
-        client_sock = accept(server_sock,
-                             (struct sockaddr *)&client_name,
-                             &client_name_len);
-        if (client_sock == -1)
+        client_sock = accept(server_sock, (struct sockaddr *)&client_name, &client_name_len);
+        if (client_sock == -1) {
             error_die("accept");
+        }
 
-#if 1
-        accept_request(client_sock);
-#else
-        if (pthread_create(&newthread, NULL, accept_request, client_sock) != 0)
-        {
+#if USING_THREAD
+        if (pthread_create(&newthread, NULL, (void *)accept_request, client_sock) != 0) {
             perror("pthread_create");
         }
+#else
+        accept_request(client_sock);
 #endif
     }
 
