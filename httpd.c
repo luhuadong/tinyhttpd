@@ -66,6 +66,7 @@ void accept_request(int client)
     
     char *query_string = NULL;
 
+    /* 读 http 请求的第一行数据（request line），把请求方法存进 method 中 */
     numchars = get_line(client, buf, sizeof(buf));
     i = 0;
     j = 0;
@@ -77,23 +78,28 @@ void accept_request(int client)
     }
     method[i] = '\0';
 
+    /* 如果请求的方法不是 GET 或 POST 的话就直接发送 response 告诉客户端没实现该方法 */
     if (strcasecmp(method, "GET") && strcasecmp(method, "POST"))
     {
         unimplemented(client);
         return;
     }
 
+    /* 如果是 POST 方法就将 cgi 标志变量置一(true) */
     if (strcasecmp(method, "POST") == 0)
     {
         cgi = 1;
     }
 
     i = 0;
+
+    /* 跳过所有的空白字符(空格) */
     while (ISspace(buf[j]) && (j < sizeof(buf)))
     {
         j++;
     }
 
+    /* 然后把 URL 读出来放到 url 数组中 */
     while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < sizeof(buf)))
     {
         url[i] = buf[j];
@@ -102,57 +108,78 @@ void accept_request(int client)
     }
     url[i] = '\0';
 
+    /* 如果这个请求是一个 GET 方法的话 */
     if (strcasecmp(method, "GET") == 0)
     {
+        /* 用一个指针指向 url */
         query_string = url;
 
+        /* 去遍历这个 url，跳过字符 ？前面的所有字符，如果遍历完毕也没找到字符 ？则退出循环 */
         while ((*query_string != '?') && (*query_string != '\0'))
         {
             query_string++;
         }
 
+        /* 退出循环后检查当前的字符是 ？还是字符串(url)的结尾 */
         if (*query_string == '?')
         {
+            /* 如果是 ？ 的话，证明这个请求需要调用 cgi，将 cgi 标志变量置一(true) */
             cgi = 1;
+
+            /* 从字符 ？ 处把字符串 url 给分隔会两份 */
             *query_string = '\0';
+
+            /* 使指针指向字符 ？后面的那个字符 */
             query_string++;
         }
     }
 
+    /* 将前面分隔两份的前面那份字符串，拼接在字符串htdocs的后面之后就输出存储到数组 path 中。相当于现在 path 中存储着一个字符串 */
     sprintf(path, "htdocs%s", url);
 
+    /* 如果 path 数组中的这个字符串的最后一个字符是以字符 / 结尾的话，就拼接上一个"index.html"的字符串，即返回首页内容 */
     if (path[strlen(path) - 1] == '/')
     {
         strcat(path, "index.html");
     }
 
+    /* 在系统上去查询该文件是否存在 */
     if (stat(path, &st) == -1)
     {
+        /* 如果不存在，那把这次 http 的请求后续的内容(head 和 body)全部读完并忽略 */
         /* read & discard headers */
         while ((numchars > 0) && strcmp("\n", buf))
         {
             numchars = get_line(client, buf, sizeof(buf));
         }
+        /* 然后返回一个找不到文件的 response 给客户端 */
         not_found(client);
     }
     else
     {
+        /* 文件存在，那去跟常量 S_IFMT 相与，相与之后的值可以用来判断该文件是什么类型的 */
+        /* S_IFMT 参读《TLPI》P281，与下面的三个常量一样是包含在 <sys/stat.h> */
         if ((st.st_mode & S_IFMT) == S_IFDIR)
         {
+            /* 如果这个文件是个目录，那就需要再在 path 后面拼接一个"/index.html"的字符串 */
             strcat(path, "/index.html");
         }
 
+        /* S_IXUSR, S_IXGRP, S_IXOTH 三者可以参读《TLPI》P295 */
         if ((st.st_mode & S_IXUSR) || (st.st_mode & S_IXGRP) || (st.st_mode & S_IXOTH))
         {
+            /* 如果这个文件是一个可执行文件，不论是属于用户/组/其他这三者类型的，就将 cgi 标志变量置一 */
             cgi = 1;
         }
 
         if (!cgi)
         {
+            /* 如果不需要 cgi 机制的话，则 */
             serve_file(client, path);
         }
         else
         {
+            /* 如果需要则调用 */
             execute_cgi(client, path, method, query_string);
         }
     }
@@ -191,6 +218,7 @@ void cat(int client, FILE *resource)
 {
     char buf[1024];
 
+    /* 从文件文件描述符中读取指定内容 */
     fgets(buf, sizeof(buf), resource);
     while (!feof(resource))
     {
@@ -224,6 +252,7 @@ void cannot_execute(int client)
 /**********************************************************************/
 void error_die(const char *sc)
 {
+    /* 包含于<stdio.h>,基于当前的 errno 值，在标准错误上产生一条错误消息。参考《TLPI》P49 */
     perror(sc);
     exit(1);
 }
@@ -247,8 +276,11 @@ void execute_cgi(int client, const char *path,
     int numchars = 1;
     int content_length = -1;
 
+    /* 往 buf 中填东西以保证能进入下面的 while */
     buf[0] = 'A';
     buf[1] = '\0';
+
+    /* 如果是 http 请求是 GET 方法的话读取并忽略请求剩下的内容 */
     if (strcasecmp(method, "GET") == 0)
     {
         /* read & discard headers */
@@ -259,7 +291,11 @@ void execute_cgi(int client, const char *path,
     }
     else /* POST */
     {
+        /* 只有 POST 方法才继续读内容 */
         numchars = get_line(client, buf, sizeof(buf));
+
+        /* 这个循环的目的是读出指示 body 长度大小的参数，并记录 body 的长度大小。其余的 header 里面的参数一律忽略 */
+        /* 注意这里只读完 header 的内容，body 的内容没有读 */
         while ((numchars > 0) && strcmp("\n", buf))
         {
             buf[15] = '\0';
@@ -269,6 +305,8 @@ void execute_cgi(int client, const char *path,
             }
             numchars = get_line(client, buf, sizeof(buf));
         }
+
+        /* 如果 http 请求的 header 没有指示 body 长度大小的参数，则报错返回 */
         if (content_length == -1)
         {
             bad_request(client);
@@ -279,6 +317,7 @@ void execute_cgi(int client, const char *path,
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
     send(client, buf, strlen(buf), 0);
 
+    /* 下面这里创建两个管道，用于两个进程间通信 */
     if (pipe(cgi_output) < 0)
     {
         cannot_execute(client);
@@ -290,23 +329,38 @@ void execute_cgi(int client, const char *path,
         return;
     }
 
+    /* 创建一个子进程 */
     if ((pid = fork()) < 0)
     {
         cannot_execute(client);
         return;
     }
+    /* 子进程用来执行 CGI 脚本 */
     if (pid == 0) /* child: CGI script */
     {
         char meth_env[255];
         char query_env[255];
         char length_env[255];
 
+        /* dup2()包含<unistd.h>中，参读《TLPI》P97 */
+        /* 将子进程的输出由标准输出重定向到 cgi_ouput 的管道写端上 */
         dup2(cgi_output[1], 1);
+
+        /* 将子进程的输出由标准输入重定向到 cgi_ouput 的管道读端上 */
         dup2(cgi_input[0], 0);
+
+        /* 关闭 cgi_ouput 管道的读端与 cgi_input 管道的写端 */
         close(cgi_output[0]);
         close(cgi_input[1]);
+
+        /* 构造一个环境变量 */
         sprintf(meth_env, "REQUEST_METHOD=%s", method);
+
+        /* putenv()包含于<stdlib.h>中，参读《TLPI》P128 */
+        /* 将这个环境变量加进子进程的运行环境中 */
         putenv(meth_env);
+
+        /* 根据 http 请求的不同方法，构造并存储不同的环境变量 */
         if (strcasecmp(method, "GET") == 0)
         {
             sprintf(query_env, "QUERY_STRING=%s", query_string);
@@ -317,13 +371,19 @@ void execute_cgi(int client, const char *path,
             sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
             putenv(length_env);
         }
+
+        /* execl()包含于<unistd.h>中，参读《TLPI》P567 */
+        /* 最后将子进程替换成另一个进程并执行 cgi 脚本 */
         execl(path, path, NULL);
         exit(0);
     }
     else
     {   /* parent */
+        /* 父进程则关闭了 cgi_output 管道的写端和 cgi_input 管道的读端 */
         close(cgi_output[1]);
         close(cgi_input[0]);
+
+        /* 如果是 POST 方法的话就继续读 body 的内容，并写到 cgi_input 管道里让子进程去读 */
         if (strcasecmp(method, "POST") == 0)
         {
             for (i = 0; i < content_length; i++)
@@ -333,13 +393,17 @@ void execute_cgi(int client, const char *path,
             }
         }
 
+        /* 然后从 cgi_output 管道中读子进程的输出，并发送到客户端去 */
         while (read(cgi_output[0], &c, 1) > 0)
         {
             send(client, &c, 1, 0);
         }
 
+        /* 关闭管道 */
         close(cgi_output[0]);
         close(cgi_input[1]);
+
+        /* 等待子进程的退出 */
         waitpid(pid, &status, 0);
     }
 }
@@ -453,15 +517,18 @@ void serve_file(int client, const char *filename)
     int numchars = 1;
     char buf[1024];
 
+    /* 确保 buf 里面有东西，能进入下面的 while 循环 */
     buf[0] = 'A';
     buf[1] = '\0';
 
     /* read & discard headers */
+    /* 循环作用是读取并忽略掉这个 http 请求后面的所有内容 */
     while ((numchars > 0) && strcmp("\n", buf))
     {
         numchars = get_line(client, buf, sizeof(buf));
     }
 
+    /* 打开这个传进来的这个路径所指的文件 */
     resource = fopen(filename, "r");
     if (resource == NULL)
     {
@@ -469,7 +536,9 @@ void serve_file(int client, const char *filename)
     }
     else
     {
+        /* 打开成功后，将这个文件的基本信息封装成 response 的头部(header)并返回 */
         headers(client, filename);
+        /* 接着把这个文件的内容读出来作为 response 的 body 发送到客户端 */
         cat(client, resource);
     }
     fclose(resource);
@@ -488,6 +557,7 @@ int startup(uint16_t *port)
     int httpd = 0;
     struct sockaddr_in name;
 
+    /* 创建一个 socket 套接字，用于 http 服务器 */
     httpd = socket(PF_INET, SOCK_STREAM, 0);
     if (httpd == -1)
     {
@@ -495,32 +565,46 @@ int startup(uint16_t *port)
     }
 
     memset(&name, 0, sizeof(name));
+
+    /* 填充 Socket 信息，这里的 PF_INET 其实是与 AF_INET 同义，表示以太网 */
+    /* IP 和 port 要转换成以网络字节序 */
+    /* INADDR_ANY 是一个 IPV4 通配地址的常量，大多实现都将其定义成 0.0.0.0 */
     name.sin_family = AF_INET;
     name.sin_port = htons(*port);
     name.sin_addr.s_addr = htonl(INADDR_ANY);
 
     int on = 1;
+
+    /* 设置 socket 可重复使用 */
     if (setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0)
     {
         error_die("setsockopt");
     }
 
+    /* 绑定地址与 socket */
+    /* 如果传进去的 sockaddr 结构中的 sin_port 指定为0，这时系统会选择一个临时的端口号 */
     if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
     {
         error_die("bind");
     }
 
+    /* 如果调用 bind 后端口号仍然是0，则手动调用getsockname()获取端口号 */
     if (*port == 0) /* if dynamically allocating a port */
     {
         socklen_t namelen = sizeof(name);
+
+        /* 调用 getsockname() 获取系统给 httpd 这个 socket 随机分配的端口号 */
         if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)
         {
             error_die("getsockname");
         }
         *port = ntohs(name.sin_port);
     }
+    /* 最初的 BSD socket 实现中，backlog 的上限是5.参读《TLPI》P1156 */
     if (listen(httpd, 5) < 0)
+    {
         error_die("listen");
+    }
     return (httpd);
 }
 
@@ -556,7 +640,7 @@ void unimplemented(int client)
 int main(void)
 {
     int server_sock = -1;
-    uint16_t port = SERVER_PORT;
+    uint16_t port = 0; /* SERVER_PORT */
     int client_sock = -1;
     struct sockaddr_in client_name;
     socklen_t client_name_len = sizeof(client_name);
@@ -565,21 +649,25 @@ int main(void)
     pthread_t newthread;
 #endif
 
+    /* 启动 Socket */
     server_sock = startup(&port);
     printf("httpd running on port %d\n", port);
 
     while (1)
     {
+        /* 阻塞等待客户端的连接，参读《TLPI》P1157 */
         client_sock = accept(server_sock, (struct sockaddr *)&client_name, &client_name_len);
         if (client_sock == -1) {
             error_die("accept");
         }
 
 #if USING_THREAD
+        /* 异步处理：为每个新链接创建一个线程进行处理 */
         if (pthread_create(&newthread, NULL, (void *)accept_request, client_sock) != 0) {
             perror("pthread_create");
         }
 #else
+        /* 同步处理 */
         accept_request(client_sock);
 #endif
     }
